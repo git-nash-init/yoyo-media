@@ -14,15 +14,14 @@ import {
   ExitFullscreenIcon,
   FullscreenIcon,
   HeartIcon,
-  MutedIcon,
   PlayIcon,
   ShareIcon,
-  VolumeIcon,
 } from "@/components/shell/icons";
 import type { Viewer } from "@/lib/engagement/types";
 import { videoUrl } from "@/lib/media/urls";
 import type { ShortItem, WatermarkConfig } from "@/lib/queries/types";
 import { FollowButton, SUBSCRIBE_LABELS } from "./FollowButton";
+import { VolumeControl } from "./VolumeControl";
 import { Watermark } from "./Watermark";
 
 export type LoadMoreShorts = (
@@ -55,6 +54,7 @@ export function ShortsFeed({
   const [cursor, setCursor] = useState(initialCursor);
   const [active, setActive] = useState(0);
   const [muted, setMuted] = useState(true); // browsers only allow muted autoplay
+  const [volume, setVolume] = useState(1); // shared by every short; the slider opens from the speaker button
   const [pausedId, setPausedId] = useState<string | null>(null); // the short the viewer paused by hand
   const [commentsFor, setCommentsFor] = useState<string | null>(null);
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
@@ -119,6 +119,17 @@ export function ShortsFeed({
     const t = setTimeout(() => void fetchMore(), 0);
     return () => clearTimeout(t);
   }, [active, items.length, cursor, loadError, fetchMore]);
+
+  const changeVolume = useCallback((value: number) => {
+    setVolume(value);
+    setMuted(value === 0);
+  }, []);
+  const toggleMute = useCallback(() => {
+    setMuted((m) => {
+      if (m && volume === 0) setVolume(0.5); // unmuting from a zero slider must make sound
+      return !m;
+    });
+  }, [volume]);
 
   const go = useCallback(
     (delta: number) => {
@@ -196,7 +207,7 @@ export function ShortsFeed({
             e.preventDefault();
             go(-1);
           } else if (e.key === "m") {
-            setMuted((m) => !m);
+            toggleMute();
           } else if (e.key === "f") {
             if (full) exitFull();
             else enterFull();
@@ -230,7 +241,9 @@ export function ShortsFeed({
               muted={muted}
               userPaused={pausedId === item.id}
               onTogglePause={() => setPausedId((p) => (p === item.id ? null : item.id))}
-              onToggleMute={() => setMuted((m) => !m)}
+              volume={volume}
+              onVolume={changeVolume}
+              onToggleMute={toggleMute}
               commentCount={commentCounts[item.id] ?? item.commentCount}
               onOpenComments={() => setCommentsFor(item.id)}
               watermark={watermark}
@@ -322,6 +335,8 @@ function ShortSlide({
   isActive,
   mounted,
   muted,
+  volume,
+  onVolume,
   userPaused,
   onTogglePause,
   onToggleMute,
@@ -335,6 +350,8 @@ function ShortSlide({
   isActive: boolean;
   mounted: boolean;
   muted: boolean;
+  volume: number;
+  onVolume: (value: number) => void;
   userPaused: boolean;
   onTogglePause: () => void;
   onToggleMute: () => void;
@@ -380,6 +397,11 @@ function ShortSlide({
   }, [isActive, userPaused, problem, mounted, attempt]);
 
   useEffect(() => () => void (tapTimer.current && clearTimeout(tapTimer.current)), []);
+
+  // The video element is re-created on retry, so apply the shared volume again whenever it appears.
+  useEffect(() => {
+    if (ref.current) ref.current.volume = volume;
+  }, [volume, mounted, attempt, problem]);
 
   // Seek slider. `pct` is 0 to 100 of the clip.
   const seekTo = (pct: number) => {
@@ -636,15 +658,15 @@ function ShortSlide({
           )}
         </ShareButton>
         <RailItem>
-          <button
-            type="button"
-            onClick={onToggleMute}
-            aria-label={muted ? "Unmute" : "Mute"}
-            aria-pressed={!muted}
-            className={railBtn}
-          >
-            {muted ? <MutedIcon size={24} /> : <VolumeIcon size={24} />}
-          </button>
+          <VolumeControl
+            variant="rail"
+            volume={volume}
+            muted={muted}
+            onVolume={onVolume}
+            onToggleMute={onToggleMute}
+            buttonClass={railBtn}
+            iconSize={24}
+          />
         </RailItem>
       </div>
 

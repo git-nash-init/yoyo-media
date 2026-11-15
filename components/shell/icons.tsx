@@ -206,3 +206,9 @@ export const BellIcon = (p: IconProps) => (
     <path d="M10 21a2 2 0 0 0 4 0" />
   </Svg>
 );
+export const RotateIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.500" y="9" width="17" height="10" rx="2" />
+    <path d="M8 5.500A6 6 0 0 1 16 5M16 2.500V5.500h-3" />
+  </Svg>
+);

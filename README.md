@@ -180,12 +180,16 @@ Set `APP_URL` to your real `https://` address and use new secrets. Use a Node.js
 - **Moving clips on every video card:** short and long videos alike show a muted clip. On a laptop, hover the
   card; on a phone or tablet, scroll the card to the middle of the screen and it plays, then stops as you
   scroll on. Data saver and reduced-motion settings turn this off.
-- **Watch page:** streaming player with seeking, playback speed, volume, fullscreen, a logo watermark,
+- **Watch page:** streaming player with seeking, playback speed, a volume slider, a logo watermark,
   resume from where you stopped, and download for subscribers.
+- **Full screen on long videos:** opens in landscape by default (the phone turns itself where the browser
+  allows it, otherwise the picture is rotated). A button next to full screen switches between landscape and
+  portrait whenever you like. The volume slider is always shown in full screen, on phones and desktops.
 - **Shorts:** a full-height vertical feed. Scroll or use the arrow keys, tap to pause, double-tap to like
   (a heart pops and disappears), and drag the **seek slider** along the bottom to scrub (playback pauses
   while you drag). The **full-screen button** in the top-right corner (or the `F` key) fills the whole
-  screen; press it again, or Esc, to go back to normal view.
+  screen; press it again, or Esc, to go back to normal view. The speaker button mutes or unmutes and opens a
+  small **volume slider** beside it that tucks away after a few seconds, so it takes no space until needed.
 - **Auto-hiding header:** the top bar slides away as you scroll down and comes back as soon as you scroll up.
 - **Likes, comments and sharing** on every video and short.
 - **Follow and subscribe:** follow channels and models. Following shows a pop-up with a confetti effect;

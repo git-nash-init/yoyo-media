@@ -6,15 +6,15 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import {
   ExitFullscreenIcon,
   FullscreenIcon,
-  MutedIcon,
   PauseIcon,
   PlayIcon,
-  VolumeIcon,
+  RotateIcon,
   WifiOffIcon,
 } from "@/components/shell/icons";
 import { buttonClass } from "@/components/ui";
 import { formatDuration } from "@/lib/format";
 import type { WatermarkConfig } from "@/lib/queries/types";
+import { VolumeControl, usePortraitViewport } from "./VolumeControl";
 import { Watermark } from "./Watermark";
 
 type Problem = null | "session" | "subscription" | "generic";
@@ -72,7 +72,13 @@ export function Player({
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [speed, setSpeed] = useState(1);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [nativeFull, setNativeFull] = useState(false); // browser full screen
+  const [fakeFull, setFakeFull] = useState(false); // cover-the-page full screen for browsers without the Fullscreen API
+  const fullscreen = nativeFull || fakeFull;
+  // Long-format videos open full screen in landscape. The viewer can switch to portrait and back.
+  const [orient, setOrient] = useState<"landscape" | "portrait">("landscape");
+  const [orientLocked, setOrientLocked] = useState(false); // true when the device itself turned to match
+  const portraitViewport = usePortraitViewport();
   const [controlsVisible, setControlsVisible] = useState(true);
 
   // Mutable bookkeeping that must not trigger renders.
@@ -261,25 +267,82 @@ export function Player({
   useEffect(() => () => void (hideTimer.current && clearTimeout(hideTimer.current)), []);
 
   // ---------- fullscreen (of the wrapper) ----------
-  useEffect(() => {
-    const onChange = () => setFullscreen(document.fullscreenElement === wrapRef.current);
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
-
-  const toggleFullscreen = useCallback(() => {
-    const wrap = wrapRef.current;
-    const v = videoRef.current;
-    if (!wrap) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else if (wrap.requestFullscreen) {
-      wrap.requestFullscreen().catch(() => {});
-    } else {
-      // Phones without element fullscreen: fall back to the native video fullscreen.
-      (v as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null)?.webkitEnterFullscreen?.();
+  // Phones that allow it are turned to the chosen orientation. Where the browser cannot turn the
+  // screen (desktops, iPhones), the picture itself is rotated (landscape on a portrait screen) or
+  // framed as a tall column (portrait on a wide screen), so both choices work on every device.
+  const lockOrientation = useCallback(async (o: "landscape" | "portrait") => {
+    const so = typeof screen !== "undefined" ? (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }) : null;
+    try {
+      if (!so?.lock) throw new Error("unsupported");
+      await so.lock(o);
+      setOrientLocked(true);
+    } catch {
+      setOrientLocked(false);
     }
   }, []);
+
+  const releaseOrientation = useCallback(() => {
+    try {
+      screen.orientation?.unlock?.();
+    } catch {
+      /* not supported */
+    }
+    setOrientLocked(false);
+  }, []);
+
+  useEffect(() => {
+    const onChange = () => {
+      const on = document.fullscreenElement === wrapRef.current;
+      setNativeFull(on);
+      if (!on) releaseOrientation();
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, [releaseOrientation]);
+
+  const exitFullscreen = useCallback(() => {
+    setFakeFull(false);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    releaseOrientation();
+  }, [releaseOrientation]);
+
+  const enterFullscreen = useCallback(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    setOrient("landscape"); // the default view for long videos
+    if (wrap.requestFullscreen) {
+      wrap
+        .requestFullscreen()
+        .then(() => lockOrientation("landscape"))
+        .catch(() => setFakeFull(true));
+    } else {
+      setFakeFull(true);
+    }
+  }, [lockOrientation]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement || fakeFull) exitFullscreen();
+    else enterFullscreen();
+  }, [fakeFull, exitFullscreen, enterFullscreen]);
+
+  const toggleOrientation = useCallback(() => {
+    const next = orient === "landscape" ? "portrait" : "landscape";
+    setOrient(next);
+    if (document.fullscreenElement) void lockOrientation(next);
+  }, [orient, lockOrientation]);
+
+  // Leaving the page must not leave the screen locked or the browser stuck in full screen.
+  useEffect(
+    () => () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      try {
+        screen.orientation?.unlock?.();
+      } catch {
+        /* not supported */
+      }
+    },
+    [],
+  );
 
   // ---------- transport ----------
   const togglePlay = useCallback(() => {
@@ -311,6 +374,13 @@ export function Player({
     if (!v.muted && v.volume === 0) v.volume = 0.5;
   }, []);
 
+  const setVolumeLevel = useCallback((value: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = value;
+    v.muted = value === 0;
+  }, []);
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const target = e.target as HTMLElement;
@@ -336,6 +406,11 @@ export function Player({
         e.preventDefault();
         toggleFullscreen();
         break;
+      case "Escape":
+        if (!fakeFull) return;
+        e.preventDefault();
+        exitFullscreen();
+        break;
       case "m":
         e.preventDefault();
         toggleMute();
@@ -355,6 +430,19 @@ export function Player({
   const showSpinner = !blocked && ready && waiting;
   const resumeAt = Math.floor(current);
   const loginHref = `/login?next=${encodeURIComponent(`/watch/${slug}${resumeAt > 0 ? `?t=${resumeAt}` : ""}`)}`;
+  // Orientation fallbacks for devices that cannot turn the screen themselves.
+  const rotateStage = fullscreen && orient === "landscape" && portraitViewport && !orientLocked;
+  const portraitFrame = fullscreen && orient === "portrait" && !portraitViewport && !orientLocked;
+  const stageClass = rotateStage
+    ? "absolute left-full top-0 origin-top-left rotate-90"
+    : portraitFrame
+      ? "absolute inset-y-0 left-1/2 -translate-x-1/2 border-x border-white/10"
+      : "absolute inset-0";
+  const stageStyle: React.CSSProperties | undefined = rotateStage
+    ? { width: "100dvh", height: "100dvw" }
+    : portraitFrame
+      ? { aspectRatio: "9 / 16", minWidth: "min(100%, 22rem)" }
+      : undefined;
   // Keep hints clear of the watermark corner.
   const hintPos =
     watermark.enabled && watermark.position === "top-left"
@@ -373,10 +461,12 @@ export function Player({
       onPointerMove={showControls}
       onPointerDown={showControls}
       onFocus={showControls}
-      className={`group/player relative isolate w-full overflow-hidden bg-black outline-none ${
-        fullscreen ? "h-full" : "aspect-video rounded-xl ring-1 ring-line"
+      className={`group/player isolate w-full overflow-hidden bg-black outline-none ${
+        fakeFull ? "fixed inset-0 z-[90] h-full" : fullscreen ? "relative h-full" : "relative aspect-video rounded-xl ring-1 ring-line"
       } ${controlsVisible || !playing ? "" : "cursor-none"}`}
     >
+      {/* Stage: everything the viewer sees. It is turned a quarter turn when landscape is chosen on a portrait screen. */}
+      <div className={stageClass} style={stageStyle}>
       <video
         ref={videoRef}
         src={src}
@@ -594,25 +684,14 @@ export function Player({
             {playing ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
           </button>
 
-          <button type="button" onClick={toggleMute} aria-label={muted || volume === 0 ? "Unmute" : "Mute"} className={iconBtn}>
-            {muted || volume === 0 ? <MutedIcon size={20} /> : <VolumeIcon size={20} />}
-          </button>
-          <input
-            type="range"
-            data-role="volume"
-            min={0}
-            max={1}
-            step={0.05}
-            value={muted ? 0 : volume}
-            onChange={(e) => {
-              const v = videoRef.current;
-              if (!v) return;
-              const val = Number(e.target.value);
-              v.volume = val;
-              v.muted = val === 0;
-            }}
-            aria-label="Volume"
-            className="hidden h-1 w-20 cursor-pointer accent-white sm:block"
+          <VolumeControl
+            variant="bar"
+            volume={volume}
+            muted={muted}
+            onVolume={setVolumeLevel}
+            onToggleMute={toggleMute}
+            alwaysOpen={fullscreen}
+            buttonClass={iconBtn}
           />
 
           <span className="ml-2 select-none whitespace-nowrap text-xs font-medium tabular-nums text-white sm:text-sm">
@@ -639,6 +718,19 @@ export function Player({
             </select>
           </label>
 
+          {fullscreen ? (
+            <button
+              type="button"
+              onClick={toggleOrientation}
+              aria-label={orient === "landscape" ? "Switch to portrait view" : "Switch to landscape view"}
+              title={orient === "landscape" ? "Switch to portrait view" : "Switch to landscape view"}
+              className="flex h-10 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-white transition hover:bg-white/15 focus-visible:bg-white/15"
+            >
+              <RotateIcon size={20} />
+              <span className="hidden text-xs font-medium sm:inline">{orient === "landscape" ? "Landscape" : "Portrait"}</span>
+            </button>
+          ) : null}
+
           <button
             type="button"
             onClick={toggleFullscreen}
@@ -648,6 +740,7 @@ export function Player({
             {fullscreen ? <ExitFullscreenIcon size={20} /> : <FullscreenIcon size={20} />}
           </button>
         </div>
+      </div>
       </div>
     </div>
   );
