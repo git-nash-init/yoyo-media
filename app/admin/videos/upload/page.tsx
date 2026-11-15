@@ -22,9 +22,9 @@ export default async function AdminUploadPage() {
         <Card className="h-fit space-y-3 p-5 text-sm text-muted">
           <h2 className="text-base font-medium text-fg">Bigger than 500 MB?</h2>
           <p>
-            Use <span className="font-medium text-fg">YoYo Studio</span> on your PC instead. It compresses the video, makes the preview clip and thumbnail candidates, and resumes if the connection drops.
+            Use <span className="font-medium text-fg">YoYo Studio</span> on your PC instead. It compresses the video, makes the short clip and thumbnail candidates, and resumes if the connection drops.
           </p>
-          <p>Browser uploads are sent as-is: no compression, no preview clip, and they restart from zero if interrupted.</p>
+          <p>Browser uploads are sent as-is: no compression, no short clip, and they restart from zero if interrupted.</p>
           <Link href="/admin/ingest" className="inline-block font-medium text-accent hover:underline">
             Set up YoYo Studio →
           </Link>

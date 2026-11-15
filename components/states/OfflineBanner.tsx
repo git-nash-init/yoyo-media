@@ -115,7 +115,7 @@ export function OfflineBanner() {
 
       {showSlow ? (
         <div className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-2xl border border-line bg-surface/95 py-2 pl-4 pr-2 text-sm text-fg shadow-lg shadow-black/40 backdrop-blur light:shadow-black/10 animate-fade-in">
-          <span role="status">Slow connection detected — previews are paused to save data.</span>
+          <span role="status">Slow connection detected — autoplay is paused to save data.</span>
           <button
             type="button"
             onClick={() => {

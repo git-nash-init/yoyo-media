@@ -104,11 +104,11 @@ export function PaywallModal({
           <p id={descId} className="mt-2 text-sm leading-relaxed text-muted">
             {videoTitle ? (
               <>
-                You&apos;ve been watching a short preview of <span className="font-medium text-fg">{videoTitle}</span>. Members get
+                You&apos;ve been watching a short clip of <span className="font-medium text-fg">{videoTitle}</span>. Members get
                 the whole thing.
               </>
             ) : (
-              <>You&apos;ve been watching a short preview. Members get the whole thing.</>
+              <>You&apos;ve been watching a short clip. Members get the whole thing.</>
             )}
           </p>
 

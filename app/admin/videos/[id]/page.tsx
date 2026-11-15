@@ -181,7 +181,7 @@ export default async function AdminVideoEditPage({
           <Card className="space-y-3 border-danger/30 p-5">
             <h2 className="text-base font-medium text-fg">Delete video</h2>
             <p className="text-sm text-muted">
-              Removes the video, its preview and all thumbnails from storage and frees {formatBytes(video.sizeBytes)}. This cannot be undone.
+              Removes the video, its short clip and all thumbnails from storage and frees {formatBytes(video.sizeBytes)}. This cannot be undone.
             </p>
             <ActionButton
               action={deleteVideoAction.bind(null, video.id, true)}

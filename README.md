@@ -177,6 +177,9 @@ Set `APP_URL` to your real `https://` address and use new secrets. Use a Node.js
 
 - **Browse and search:** the catalogue with channel chips, pagination and fuzzy search across videos,
   series, models and channels.
+- **Moving clips on every video card:** short and long videos alike show a muted clip. On a laptop, hover the
+  card; on a phone or tablet, scroll the card to the middle of the screen and it plays, then stops as you
+  scroll on. Data saver and reduced-motion settings turn this off.
 - **Watch page:** streaming player with seeking, playback speed, volume, fullscreen, a logo watermark,
   resume from where you stopped, and download for subscribers.
 - **Shorts:** a full-height vertical feed. Scroll or use the arrow keys, tap to pause, double-tap to like

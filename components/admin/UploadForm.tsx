@@ -144,7 +144,7 @@ export function UploadForm() {
       setType(s);
     } catch {
       // Not fatal: the server still verifies the real file type. Duration can be fixed by re-pushing through Studio.
-      setFileError("Your browser could not preview this video, so its duration and thumbnail could not be read. You can still upload it and set a thumbnail afterwards.");
+      setFileError("Your browser could not read this video, so its duration and thumbnail could not be read. You can still upload it and set a thumbnail afterwards.");
     } finally {
       URL.revokeObjectURL(url);
       setProbing(false);
@@ -309,7 +309,7 @@ export function UploadForm() {
             {thumbPreview ? (
               <Thumb src={thumbPreview} alt="Captured thumbnail" className={meta && meta.height > meta.width ? "h-24 w-[3.4rem] rounded-md" : "h-20 w-36 rounded-md"} />
             ) : (
-              <div className="grid h-20 w-36 place-items-center rounded-md bg-surface-2 text-xs text-muted">No preview</div>
+              <div className="grid h-20 w-36 place-items-center rounded-md bg-surface-2 text-xs text-muted">No image</div>
             )}
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
               <dt className="text-muted">Size</dt>

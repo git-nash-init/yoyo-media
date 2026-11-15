@@ -505,7 +505,7 @@ export function Player({
               onClick={() => reload({ preview: true, play: true })}
               className="rounded-lg bg-white/15 px-3 py-1 font-medium hover:bg-white/25"
             >
-              Play preview quality
+              Play a short clip
             </button>
           ) : null}
           <button type="button" onClick={() => setSlow(false)} className="font-medium text-white/70 hover:text-white">
@@ -519,7 +519,7 @@ export function Player({
           role="status"
           className={`absolute z-30 flex max-w-[80%] flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl bg-black/75 px-3 py-2 text-xs text-white backdrop-blur-sm sm:text-sm ${hintPos}`}
         >
-          <span>Playing the short preview clip.</span>
+          <span>Playing a short clip to save data.</span>
           <button
             type="button"
             onClick={() => reload({ preview: false, play: true })}
