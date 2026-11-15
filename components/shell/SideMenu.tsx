@@ -218,7 +218,7 @@ export function SideMenu({ user, signOut }: { user: SideMenuUser; signOut: () =>
       {pinned ? (
         <aside
           id="side-menu"
-          className="sticky top-14 hidden h-[calc(100dvh_-_3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-line bg-bg lg:block"
+          className="sticky top-14 hidden h-[calc(100dvh_-_3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-line bg-bg transition-[top,height] duration-300 ease-out lg:block [:root[data-header-hidden]_&]:top-0 [:root[data-header-hidden]_&]:h-dvh"
         >
           <MenuItems user={user} signOut={signOut} />
         </aside>

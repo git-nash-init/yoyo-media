@@ -2,6 +2,7 @@ import { Suspense, type ReactNode } from "react";
 import { SessionWatcher } from "@/components/auth/SessionWatcher";
 import { Logo } from "@/components/brand/Logo";
 import { AccountMenu } from "@/components/shell/AccountMenu";
+import { AutoHideHeader } from "@/components/shell/AutoHideHeader";
 import { BottomNav, TopNav } from "@/components/shell/Nav";
 import { SearchBox } from "@/components/shell/SearchBox";
 import { MenuButton, SideMenu, SideMenuProvider } from "@/components/shell/SideMenu";
@@ -27,7 +28,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           Skip to content
         </a>
 
-        <header className="glass-bar sticky top-0 z-40 border-b">
+        <AutoHideHeader className="glass-bar sticky top-0 z-40 border-b">
           <div className="flex h-14 items-center gap-2 px-4 sm:gap-3 lg:gap-5 lg:px-6">
             <MenuButton />
             <span className="shrink-0 sm:hidden">
@@ -77,7 +78,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               </div>
             )}
           </div>
-        </header>
+        </AutoHideHeader>
 
         <OfflineBanner />
         {user ? <SessionWatcher /> : null}

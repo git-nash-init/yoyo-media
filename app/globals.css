@@ -204,6 +204,14 @@ body {
   100% { opacity: 1; transform: none; }
 }
 .fx-particle { position: absolute; left: 0; top: 0; display: block; animation: fx-fly 760ms cubic-bezier(0.15, 0.7, 0.3, 1) both; }
+.fx-heart { animation: fx-heart 800ms ease-out both; }
+@keyframes fx-heart {
+  0% { transform: scale(0.3); opacity: 0; }
+  18% { transform: scale(1.2); opacity: 1; }
+  32% { transform: scale(0.95); opacity: 1; }
+  48% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1.12) translateY(-12px); opacity: 0; }
+}
 .fx-pop { animation: fx-pop 420ms cubic-bezier(0.3, 1.4, 0.5, 1); }
 .fx-ring { animation: fx-ring 900ms ease-out both; }
 .fx-toast { animation: fx-toast 320ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }

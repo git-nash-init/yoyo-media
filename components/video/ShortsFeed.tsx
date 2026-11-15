@@ -11,6 +11,8 @@ import {
   ChevronDown,
   ChevronUp,
   CommentIcon,
+  ExitFullscreenIcon,
+  FullscreenIcon,
   HeartIcon,
   MutedIcon,
   PlayIcon,
@@ -58,6 +60,9 @@ export function ShortsFeed({
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [full, setFull] = useState(false); // full-screen view
+  const rootRef = useRef<HTMLDivElement>(null);
+  const usedFullscreenApi = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const slides = useRef(new Map<number, HTMLElement>());
   const loadingRef = useRef(false);
@@ -123,10 +128,58 @@ export function ShortsFeed({
     [active, items.length],
   );
 
+  // Full-screen view: the feed covers the whole screen (header and bottom bar included). Browsers that
+  // support the Fullscreen API also hide their own address bar; the cover layout works everywhere else.
+  const enterFull = useCallback(() => {
+    setFull(true);
+    const el = rootRef.current;
+    if (el && typeof el.requestFullscreen === "function") {
+      el.requestFullscreen({ navigationUI: "hide" })
+        .then(() => {
+          usedFullscreenApi.current = true;
+        })
+        .catch(() => {});
+    }
+  }, []);
+  const exitFull = useCallback(() => {
+    setFull(false);
+    usedFullscreenApi.current = false;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // The browser's own exit (Esc, swipe) must put the feed back to normal.
+    const onChange = () => {
+      if (!document.fullscreenElement && usedFullscreenApi.current) {
+        usedFullscreenApi.current = false;
+        setFull(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitFull();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [full, exitFull]);
+
+  // Leaving the page must not leave the browser stuck in full screen.
+  useEffect(
+    () => () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    },
+    [],
+  );
+
   const commentsItem = commentsFor ? items.find((i) => i.id === commentsFor) : undefined;
 
   return (
-    <div className="relative">
+    <div ref={rootRef} className={full ? "fixed inset-0 z-[80] bg-black" : "relative"}>
       <div
         ref={scroller}
         tabIndex={0}
@@ -144,13 +197,18 @@ export function ShortsFeed({
             go(-1);
           } else if (e.key === "m") {
             setMuted((m) => !m);
+          } else if (e.key === "f") {
+            if (full) exitFull();
+            else enterFull();
           } else if (e.key === " " && tag !== "BUTTON" && tag !== "A") {
             e.preventDefault();
             const id = items[active]?.id;
             if (id) setPausedId((p) => (p === id ? null : id));
           }
         }}
-        className="no-scrollbar h-[calc(100dvh_-_7rem_-_env(safe-area-inset-bottom))] snap-y snap-mandatory overflow-y-scroll overscroll-contain outline-none md:h-[calc(100dvh_-_3.5rem)]"
+        className={`no-scrollbar snap-y snap-mandatory overflow-y-scroll overscroll-contain outline-none ${
+          full ? "h-dvh" : "h-[calc(100dvh_-_7rem_-_env(safe-area-inset-bottom))] md:h-[calc(100dvh_-_3.5rem)]"
+        }`}
       >
         {items.map((item, i) => (
           <article
@@ -163,7 +221,7 @@ export function ShortsFeed({
             aria-posinset={i + 1}
             aria-setsize={cursor ? -1 : items.length}
             aria-label={item.title}
-            className="flex h-full snap-start snap-always items-center justify-center md:py-3"
+            className={`flex h-full snap-start snap-always items-center justify-center ${full ? "" : "md:py-3"}`}
           >
             <ShortSlide
               item={item}
@@ -176,6 +234,8 @@ export function ShortsFeed({
               commentCount={commentCounts[item.id] ?? item.commentCount}
               onOpenComments={() => setCommentsFor(item.id)}
               watermark={watermark}
+              full={full}
+              onToggleFull={full ? exitFull : enterFull}
             />
           </article>
         ))}
@@ -268,6 +328,8 @@ function ShortSlide({
   commentCount,
   onOpenComments,
   watermark,
+  full,
+  onToggleFull,
 }: {
   item: ShortItem;
   isActive: boolean;
@@ -279,6 +341,8 @@ function ShortSlide({
   commentCount: number;
   onOpenComments: () => void;
   watermark: WatermarkConfig;
+  full: boolean;
+  onToggleFull: () => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [buffering, setBuffering] = useState(false);
@@ -286,6 +350,7 @@ function ShortSlide({
   const [problem, setProblem] = useState<SlideProblem>(null);
   const [attempt, setAttempt] = useState(0);
   const [burst, setBurst] = useState(0); // increments to replay the double-tap heart
+  const [heartOn, setHeartOn] = useState(false); // the big heart is only on screen while it animates
   const [duration, setDuration] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
   const scrubbingRef = useRef(false);
@@ -390,6 +455,7 @@ function ShortSlide({
       tapTimer.current = null;
       like.like();
       setBurst((b) => b + 1);
+      setHeartOn(true);
       return;
     }
     tapTimer.current = setTimeout(() => {
@@ -400,8 +466,9 @@ function ShortSlide({
 
   const wmConfig: WatermarkConfig = {
     enabled: watermark.enabled,
-    // Bottom corners hold the caption and action rail on a short, so keep the mark on top.
-    position: watermark.position === "top-left" || watermark.position === "bottom-left" ? "top-left" : "top-right",
+    // Bottom corners hold the caption and action rail on a short, and the top-right corner holds the
+    // full-screen button, so the mark always sits top-left.
+    position: "top-left",
   };
 
   return (
@@ -452,9 +519,15 @@ function ShortSlide({
         aria-label={userPaused ? `Play ${item.title}` : `Pause ${item.title}`}
         className="absolute inset-0 z-10 grid cursor-pointer place-items-center"
       >
-        {burst > 0 ? (
-          <span key={burst} className="pointer-events-none absolute animate-ping text-accent [animation-iteration-count:1]" aria-hidden="true">
+        {heartOn ? (
+          <span
+            key={burst}
+            aria-hidden="true"
+            onAnimationEnd={() => setHeartOn(false)}
+            className="fx-heart pointer-events-none absolute grid place-items-center text-accent"
+          >
             <HeartIcon size={96} filled />
+            <Burst trigger={burst} kind="hearts" radius={90} />
           </span>
         ) : null}
         {userPaused && !problem ? (
@@ -471,6 +544,17 @@ function ShortSlide({
       </button>
 
       <Watermark config={wmConfig} compact />
+
+      <button
+        type="button"
+        onClick={onToggleFull}
+        aria-pressed={full}
+        aria-label={full ? "Exit full screen" : "Full screen"}
+        title={full ? "Exit full screen" : "Full screen"}
+        className="absolute right-3 top-3 z-30 grid h-10 w-10 place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm transition hover:bg-black/65 active:scale-95"
+      >
+        {full ? <ExitFullscreenIcon size={20} /> : <FullscreenIcon size={20} />}
+      </button>
 
       {problem ? (
         <div role="alert" className="absolute inset-0 z-20 grid place-items-center bg-black/80 p-6 text-center text-sm text-white/80">

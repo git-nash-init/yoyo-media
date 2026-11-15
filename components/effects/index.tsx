@@ -134,6 +134,7 @@ export function FollowToast({
         </button>
       </div>
     </div>,
-    document.body,
+    // In full screen only that element is drawn, so the pop-up has to live inside it.
+    document.fullscreenElement ?? document.body,
   );
 }

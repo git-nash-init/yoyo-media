@@ -179,8 +179,11 @@ Set `APP_URL` to your real `https://` address and use new secrets. Use a Node.js
   series, models and channels.
 - **Watch page:** streaming player with seeking, playback speed, volume, fullscreen, a logo watermark,
   resume from where you stopped, and download for subscribers.
-- **Shorts:** a full-height vertical feed. Scroll or use the arrow keys, tap to pause, double-tap to like,
-  and drag the **seek slider** along the bottom to scrub (playback pauses while you drag).
+- **Shorts:** a full-height vertical feed. Scroll or use the arrow keys, tap to pause, double-tap to like
+  (a heart pops and disappears), and drag the **seek slider** along the bottom to scrub (playback pauses
+  while you drag). The **full-screen button** in the top-right corner (or the `F` key) fills the whole
+  screen; press it again, or Esc, to go back to normal view.
+- **Auto-hiding header:** the top bar slides away as you scroll down and comes back as soon as you scroll up.
 - **Likes, comments and sharing** on every video and short.
 - **Follow and subscribe:** follow channels and models. Following shows a pop-up with a confetti effect;
   liking shows a heart burst. The effects are pure CSS and SVG, so nothing extra is downloaded, and they
