@@ -2,7 +2,7 @@
 
 import { renderIcon } from "@/components/ui/line-icon";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   ExitFullscreenIcon,
   FullscreenIcon,
@@ -23,6 +23,8 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const SAVE_EVERY_MS = 10_000;
 const SLOW_AFTER_MS = 4_000;
 const HIDE_CONTROLS_MS = 3_000;
+/** Below this picture width the control row switches to its compact form. */
+const COMPACT_BELOW_PX = 560;
 
 type Props = {
   videoId: string;
@@ -80,6 +82,34 @@ export function Player({
   const [orientLocked, setOrientLocked] = useState(false); // true when the device itself turned to match
   const portraitViewport = usePortraitViewport();
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const speedOpenRef = useRef(false);
+  const speedRef2 = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  // A narrow picture (portrait, or a small phone) gets a compact control row so nothing is pushed out of frame.
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    speedOpenRef.current = speedOpen;
+  }, [speedOpen]);
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const measure = () => setCompact(el.clientWidth > 0 && el.clientWidth < COMPACT_BELOW_PX);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // Close the speed list on an outside tap.
+  useEffect(() => {
+    if (!speedOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!speedRef2.current?.contains(e.target as Node)) setSpeedOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [speedOpen]);
 
   // Mutable bookkeeping that must not trigger renders.
   const position = useRef(initialPosition); // last known position in the FULL video
@@ -261,7 +291,7 @@ export function Player({
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
       const v = videoRef.current;
-      if (v && !v.paused) setControlsVisible(false);
+      if (v && !v.paused && !speedOpenRef.current) setControlsVisible(false);
     }, HIDE_CONTROLS_MS);
   }, []);
   useEffect(() => () => void (hideTimer.current && clearTimeout(hideTimer.current)), []);
@@ -448,8 +478,9 @@ export function Player({
     watermark.enabled && watermark.position === "top-left"
       ? "right-3 top-3 sm:right-4 sm:top-4"
       : "left-3 top-3 sm:left-4 sm:top-4";
-  const iconBtn =
-    "grid h-10 w-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15 focus-visible:bg-white/15";
+  const iconBtn = `grid shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15 focus-visible:bg-white/15 ${
+    compact ? "h-9 w-9" : "h-10 w-10"
+  }`;
 
   return (
     <div
@@ -466,7 +497,7 @@ export function Player({
       } ${controlsVisible || !playing ? "" : "cursor-none"}`}
     >
       {/* Stage: everything the viewer sees. It is turned a quarter turn when landscape is chosen on a portrait screen. */}
-      <div className={stageClass} style={stageStyle}>
+      <div ref={stageRef} className={stageClass} style={stageStyle}>
       <video
         ref={videoRef}
         src={src}
@@ -690,33 +721,56 @@ export function Player({
             muted={muted}
             onVolume={setVolumeLevel}
             onToggleMute={toggleMute}
-            alwaysOpen={fullscreen}
+            compact={compact}
             buttonClass={iconBtn}
           />
 
-          <span className="ml-2 select-none whitespace-nowrap text-xs font-medium tabular-nums text-white sm:text-sm">
+          <span className="ml-1 min-w-0 select-none whitespace-nowrap text-xs font-medium tabular-nums text-white sm:ml-2 sm:text-sm">
             {formatDuration(current)} <span className="text-white/60">/ {formatDuration(total)}</span>
           </span>
 
-          <span className="flex-1" />
+          <span className="min-w-0 flex-1" />
 
-          <label className="flex items-center">
-            <span className="sr-only">Playback speed</span>
-            <select
-              value={speed}
-              onChange={(e) => {
-                const v = videoRef.current;
-                if (v) v.playbackRate = Number(e.target.value);
-              }}
-              className="h-9 cursor-pointer rounded-lg bg-transparent px-2 text-xs font-medium text-white outline-none hover:bg-white/15 focus-visible:bg-white/15 sm:text-sm"
+          {/* Speed: a short "1×" button that opens the list of speeds */}
+          <div ref={speedRef2} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setSpeedOpen((o) => !o)}
+              aria-label={`Playback speed ${speed}×`}
+              aria-haspopup="menu"
+              aria-expanded={speedOpen}
+              className="h-9 min-w-10 rounded-lg px-2 text-xs font-semibold tabular-nums text-white transition hover:bg-white/15 focus-visible:bg-white/15 sm:text-sm"
             >
-              {SPEEDS.map((s) => (
-                <option key={s} value={s} className="bg-surface text-fg">
-                  {s === 1 ? "1× Normal" : `${s}×`}
-                </option>
-              ))}
-            </select>
-          </label>
+              {speed}×
+            </button>
+            {speedOpen ? (
+              <div
+                role="menu"
+                aria-label="Playback speed"
+                className="absolute bottom-full right-0 z-40 mb-2 flex w-24 flex-col overflow-hidden rounded-xl bg-black/85 py-1 shadow-lg backdrop-blur-sm"
+              >
+                {SPEEDS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={s === speed}
+                    onClick={() => {
+                      const v = videoRef.current;
+                      if (v) v.playbackRate = s;
+                      setSpeedOpen(false);
+                      showControls();
+                    }}
+                    className={`px-3 py-2 text-left text-sm tabular-nums transition hover:bg-white/15 ${
+                      s === speed ? "font-semibold text-brand" : "text-white"
+                    }`}
+                  >
+                    {s}×
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           {fullscreen ? (
             <button
@@ -724,10 +778,14 @@ export function Player({
               onClick={toggleOrientation}
               aria-label={orient === "landscape" ? "Switch to portrait view" : "Switch to landscape view"}
               title={orient === "landscape" ? "Switch to portrait view" : "Switch to landscape view"}
-              className="flex h-10 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-white transition hover:bg-white/15 focus-visible:bg-white/15"
+              className={`flex shrink-0 items-center gap-1.5 rounded-full text-white transition hover:bg-white/15 focus-visible:bg-white/15 ${
+                compact ? "h-9 w-9 justify-center" : "h-10 px-2.5"
+              }`}
             >
               <RotateIcon size={20} />
-              <span className="hidden text-xs font-medium sm:inline">{orient === "landscape" ? "Landscape" : "Portrait"}</span>
+              {compact ? null : (
+                <span className="text-xs font-medium">{orient === "landscape" ? "Landscape" : "Portrait"}</span>
+              )}
             </button>
           ) : null}
 

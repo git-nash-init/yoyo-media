@@ -52,7 +52,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
     getSettings(),
     canWatch ? Promise.resolve(null) : getPlan(),
     video.seriesId ? listSeriesEpisodes(video.seriesId) : Promise.resolve([]),
-    listMoreLikeThis(video, 8),
+    listMoreLikeThis(video, 60),
     video.channel ? isFollowingChannel(user?.id, video.channel.id) : Promise.resolve(false),
     canWatch && user ? getWatchPosition(user.id, video.id) : Promise.resolve(0),
     getEngagement([video.id], user?.id ?? null),

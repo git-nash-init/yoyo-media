@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { formatDuration } from "@/lib/format";
 import type { ModelTile, SeriesTile, VideoCardData } from "@/lib/queries/types";
 import { VideoCard } from "./VideoCard";
+
+export { VideoRow } from "./VideoRow";
 
 /** Same column rhythm as VideoGridSkeleton so loading → loaded does not shift layout. */
 export function VideoGrid({ videos, showChannel = true }: { videos: VideoCardData[]; showChannel?: boolean }) {
@@ -25,51 +26,6 @@ export function VideoRail({ videos }: { videos: VideoCardData[] }) {
         </div>
       ))}
     </div>
-  );
-}
-
-/** Compact horizontal card for sidebars (up next, episodes). */
-export function VideoRow({ video, current = false }: { video: VideoCardData; current?: boolean }) {
-  return (
-    <Link
-      href={`/watch/${video.slug}`}
-      aria-current={current ? "true" : undefined}
-      className={`group flex gap-3 rounded-xl p-2 transition hover:bg-surface-2 ${current ? "bg-surface-2 ring-1 ring-brand/50" : ""}`}
-    >
-      <span className="relative block aspect-video w-36 shrink-0 overflow-hidden rounded-lg bg-surface-2 sm:w-40">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={video.thumb}
-          alt=""
-          width={320}
-          height={180}
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover"
-        />
-        {video.durationSec > 0 ? (
-          <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 text-[11px] font-medium tabular-nums text-white">
-            {formatDuration(video.durationSec)}
-          </span>
-        ) : null}
-      </span>
-      <span className="min-w-0 flex-1 py-0.5">
-        {video.episodeNo != null ? (
-          <span className="block text-xs font-medium text-accent">
-            Episode {video.episodeNo}
-            {current ? " · Now playing" : ""}
-          </span>
-        ) : current ? (
-          <span className="block text-xs font-medium text-accent">Now playing</span>
-        ) : null}
-        <span className="line-clamp-2 text-sm font-medium leading-snug text-fg group-hover:text-accent">
-          {video.title}
-        </span>
-        <span className="mt-1 block truncate text-xs text-muted">
-          {[video.channel?.name, video.ago].filter(Boolean).join(" · ")}
-        </span>
-      </span>
-    </Link>
   );
 }
 

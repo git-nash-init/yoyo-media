@@ -47,7 +47,7 @@ export function VolumeControl({
   onVolume,
   onToggleMute,
   variant,
-  alwaysOpen = false,
+  compact = false,
   buttonClass,
   iconSize = 20,
 }: {
@@ -57,7 +57,8 @@ export function VolumeControl({
   onVolume: (value: number) => void;
   onToggleMute: () => void;
   variant: "bar" | "rail";
-  alwaysOpen?: boolean;
+  /** Narrow player (portrait): the slider opens upward from the speaker instead of sitting in the row. */
+  compact?: boolean;
   buttonClass: string;
   iconSize?: number;
 }) {
@@ -108,11 +109,43 @@ export function VolumeControl({
     />
   ) : null;
 
+  if (variant === "bar" && compact) {
+    // Portrait: a tall pill above the speaker, filled from the bottom up (like Shorts, turned on its side).
+    return (
+      <div className="relative shrink-0">
+        {button}
+        {slider && open ? (
+          <div className="absolute bottom-full left-1/2 z-40 mb-2 h-40 w-10 -translate-x-1/2 rounded-full bg-black/70 backdrop-blur-sm">
+            <input
+              type="range"
+              data-role="volume"
+              min={0}
+              max={1}
+              step={0.05}
+              value={level}
+              aria-label="Volume"
+              aria-orientation="vertical"
+              aria-valuetext={`${Math.round(level * 100)} percent`}
+              className="scrubber !absolute !left-1/2 !top-1/2 !w-28 -translate-x-1/2 -translate-y-1/2 -rotate-90"
+              style={{ "--p": `${level * 100}%` } as CSSProperties}
+              onChange={(e) => {
+                onVolume(Number(e.currentTarget.value));
+                wake();
+              }}
+              onPointerDown={wake}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   if (variant === "bar") {
+    // Landscape / wide: the full horizontal slider is always there.
     return (
       <>
         {button}
-        {slider ? <div className={alwaysOpen || open ? "w-24 shrink-0" : "hidden w-24 shrink-0 sm:block"}>{slider}</div> : null}
+        {slider ? <div className="w-28 shrink-0">{slider}</div> : null}
       </>
     );
   }
