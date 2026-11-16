@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { timeAgo } from "@/lib/format";
 import { channelLogoUrl, modelPhotoUrl, previewUrl, seriesPosterUrl, thumbUrl } from "@/lib/media/urls";
+import { buildQualities } from "@/lib/media/quality";
 import { PAGE_SIZE, paginate, type PageInfo } from "./pagination";
 import { getEngagement } from "@/lib/engagement/queries";
 import type { ChannelRef, ShortItem, ShortOwner, VideoCardData } from "./types";
@@ -117,6 +118,7 @@ export const getWatchVideo = cache(async (slug: string) => {
       description: true,
       type: true,
       durationSec: true,
+      heightPx: true,
       views: true,
       publishedAt: true,
       updatedAt: true,
@@ -128,6 +130,7 @@ export const getWatchVideo = cache(async (slug: string) => {
       channel: { select: { id: true, slug: true, name: true, logoPath: true } },
       series: { select: { id: true, slug: true, title: true, posterPath: true } },
       models: { select: { model: { select: { id: true, slug: true, name: true, photoPath: true } } } },
+      renditions: { select: { height: true }, orderBy: { height: "desc" } },
     },
   });
   if (!v) return null;
@@ -138,6 +141,8 @@ export const getWatchVideo = cache(async (slug: string) => {
     description: v.description,
     type: v.type,
     durationSec: v.durationSec,
+    /** Quality choices, best first: the main file (height 0 means "the file as uploaded") then each lower copy. */
+    qualities: buildQualities(v.heightPx, v.renditions.map((r) => r.height)),
     views: v.views,
     publishedAt: v.publishedAt,
     episodeNo: v.episodeNo,

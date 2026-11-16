@@ -13,6 +13,7 @@ import {
 } from "@/components/shell/icons";
 import { buttonClass } from "@/components/ui";
 import { formatDuration } from "@/lib/format";
+import { pickQuality, type Quality } from "@/lib/media/quality";
 import type { WatermarkConfig } from "@/lib/queries/types";
 import { VolumeControl, usePortraitViewport } from "./VolumeControl";
 import { Watermark } from "./Watermark";
@@ -26,6 +27,7 @@ const HIDE_CONTROLS_MS = 3_000;
 /** Below this picture width the control row switches to its compact form. */
 const COMPACT_BELOW_PX = 640;
 const SKIP_SECONDS = 10;
+const QUALITY_KEY = "yoyo-quality";
 
 type Props = {
   videoId: string;
@@ -41,6 +43,8 @@ type Props = {
   initialPosition: number;
   watermark: WatermarkConfig;
   subscribeHref: string;
+  /** Lower-quality copies of this video, best first. Empty when there is only one version (no selector shown). */
+  qualities?: Quality[];
 };
 
 /**
@@ -58,6 +62,7 @@ export function Player({
   initialPosition,
   watermark,
   subscribeHref,
+  qualities = [],
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -91,14 +96,16 @@ export function Player({
   const lastTap = useRef<{ t: number; zone: "back" | "fwd" | "mid" } | null>(null);
   const lastPointer = useRef<string>("mouse");
   const [speedOpen, setSpeedOpen] = useState(false);
-  const speedOpenRef = useRef(false);
-  const speedRef2 = useRef<HTMLDivElement>(null);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const menuOpenRef = useRef(false);
+  const [quality, setQuality] = useState(0); // height of the copy being played; 0 = the main file
+  const qualityRef = useRef(0);
   const stageRef = useRef<HTMLDivElement>(null);
   // A narrow picture (portrait, or a small phone) gets a compact control row so nothing is pushed out of frame.
   const [compact, setCompact] = useState(false);
   useEffect(() => {
-    speedOpenRef.current = speedOpen;
-  }, [speedOpen]);
+    menuOpenRef.current = speedOpen || qualityOpen;
+  }, [speedOpen, qualityOpen]);
   useLayoutEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -109,15 +116,17 @@ export function Player({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  // Close the speed list on an outside tap.
+  // Close the speed / quality list on an outside tap.
   useEffect(() => {
-    if (!speedOpen) return;
+    if (!speedOpen && !qualityOpen) return;
     const onDown = (e: PointerEvent) => {
-      if (!speedRef2.current?.contains(e.target as Node)) setSpeedOpen(false);
+      if ((e.target as Element | null)?.closest?.("[data-menu]")) return;
+      setSpeedOpen(false);
+      setQualityOpen(false);
     };
     document.addEventListener("pointerdown", onDown);
     return () => document.removeEventListener("pointerdown", onDown);
-  }, [speedOpen]);
+  }, [speedOpen, qualityOpen]);
 
   // Mutable bookkeeping that must not trigger renders.
   const position = useRef(initialPosition); // last known position in the FULL video
@@ -180,6 +189,8 @@ export function Player({
   useEffect(() => clearSlowTimer, [clearSlowTimer]);
 
   // ---------- (re)loading the media element ----------
+  const srcFor = useCallback((h: number) => (h ? `${src}?q=${h}` : src), [src]);
+
   const reload = useCallback(
     (opts: { preview?: boolean; play?: boolean } = {}) => {
       const v = videoRef.current;
@@ -195,11 +206,11 @@ export function Player({
       pendingSeek.current = toPreview ? null : position.current > 0 ? position.current : null;
       wantPlay.current = opts.play ?? true;
       v.loop = toPreview;
-      v.src = toPreview && previewSrc ? previewSrc : src;
+      v.src = toPreview && previewSrc ? previewSrc : srcFor(qualityRef.current);
       v.load();
       armSlowTimer();
     },
-    [src, previewSrc, clearSlowTimer, armSlowTimer],
+    [srcFor, previewSrc, clearSlowTimer, armSlowTimer],
   );
 
   // ---------- offline / online ----------
@@ -238,7 +249,7 @@ export function Player({
     checkingError.current = true;
     let next: Problem = "generic";
     try {
-      const res = await fetch(src, {
+      const res = await fetch(srcFor(qualityRef.current), {
         headers: { Range: "bytes=0-0" },
         credentials: "same-origin",
         cache: "no-store",
@@ -263,7 +274,7 @@ export function Player({
     setSlow(false);
     clearSlowTimer();
     setProblem(next);
-  }, [src, clearSlowTimer]);
+  }, [srcFor, clearSlowTimer]);
 
   // ---------- metadata ----------
   const speedRef = useRef(1);
@@ -299,10 +310,53 @@ export function Player({
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
       const v = videoRef.current;
-      if (v && !v.paused && !speedOpenRef.current) setControlsVisible(false);
+      if (v && !v.paused && !menuOpenRef.current) setControlsVisible(false);
     }, HIDE_CONTROLS_MS);
   }, []);
   useEffect(() => () => void (hideTimer.current && clearTimeout(hideTimer.current)), []);
+
+  // ---------- quality ----------
+  // Switch to another copy of the same video and carry on from the same second, playing or paused as before.
+  // React swaps the <video> source when `quality` changes; handleMetadata then seeks and resumes.
+  const changeQuality = useCallback(
+    (h: number, remember = true) => {
+      if (h === qualityRef.current || previewRef.current) return;
+      const v = videoRef.current;
+      const pos = position.current;
+      pendingSeek.current = pos > 0 ? pos : null;
+      wantPlay.current = !!v && !v.paused && !v.ended;
+      qualityRef.current = h;
+      setQuality(h);
+      setProblem(null);
+      setSlow(false);
+      setWaiting(true);
+      armSlowTimer();
+      if (remember) {
+        try {
+          // Choosing the best copy is remembered as "always the best"; a lower copy as its height.
+          localStorage.setItem(QUALITY_KEY, String(h));
+        } catch {
+          /* private mode: the choice just is not remembered */
+        }
+      }
+    },
+    [armSlowTimer],
+  );
+
+  // Start from the quality this viewer chose last time, when this video has it (or the closest one below).
+  useEffect(() => {
+    if (qualities.length === 0) return;
+    let preferred = 0;
+    try {
+      preferred = Number(localStorage.getItem(QUALITY_KEY)) || 0;
+    } catch {
+      /* ignore */
+    }
+    const pick = pickQuality(qualities, preferred);
+    if (pick && pick.height !== 0) changeQuality(pick.height, false);
+    // Only once, when the player first appears.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---------- fullscreen (of the wrapper) ----------
   // Phones that allow it are turned to the chosen orientation. Where the browser cannot turn the
@@ -577,7 +631,7 @@ export function Player({
       <div ref={stageRef} className={stageClass} style={stageStyle}>
       <video
         ref={videoRef}
-        src={src}
+        src={srcFor(quality)}
         poster={poster}
         preload="metadata"
         playsInline
@@ -740,6 +794,15 @@ export function Player({
           <span>
             <strong className="font-medium">Slow connection.</strong> Still trying…
           </span>
+          {qualities.length > 1 && quality !== qualities[qualities.length - 1].height ? (
+            <button
+              type="button"
+              onClick={() => changeQuality(qualities[qualities.length - 1].height, false)}
+              className="rounded-lg bg-white/15 px-3 py-1 font-medium hover:bg-white/25"
+            >
+              Use {qualities[qualities.length - 1].label}
+            </button>
+          ) : null}
           {previewSrc ? (
             <button
               type="button"
@@ -864,10 +927,13 @@ export function Player({
           <span className="min-w-0 flex-1" />
 
           {/* Speed: a short "1×" button that opens the list of speeds */}
-          <div ref={speedRef2} className="relative shrink-0">
+          <div data-menu className="relative shrink-0">
             <button
               type="button"
-              onClick={() => setSpeedOpen((o) => !o)}
+              onClick={() => {
+                setSpeedOpen((o) => !o);
+                setQualityOpen(false);
+              }}
               aria-label={`Playback speed ${speed}×`}
               aria-haspopup="menu"
               aria-expanded={speedOpen}
@@ -903,6 +969,51 @@ export function Player({
               </div>
             ) : null}
           </div>
+
+          {/* Quality: shown only when this video has more than one version */}
+          {qualities.length > 0 && !usingPreview ? (
+            <div data-menu className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setQualityOpen((o) => !o);
+                  setSpeedOpen(false);
+                }}
+                aria-label={`Video quality ${(qualities.find((q) => q.height === quality) ?? qualities[0]).label}`}
+                aria-haspopup="menu"
+                aria-expanded={qualityOpen}
+                className="h-9 min-w-10 rounded-lg px-2 text-xs font-semibold tabular-nums text-white transition hover:bg-white/15 focus-visible:bg-white/15 sm:text-sm"
+              >
+                {(qualities.find((q) => q.height === quality) ?? qualities[0]).label}
+              </button>
+              {qualityOpen ? (
+                <div
+                  role="menu"
+                  aria-label="Video quality"
+                  className="absolute bottom-full right-0 z-40 mb-2 flex w-24 flex-col overflow-hidden rounded-xl bg-black/85 py-1 shadow-lg backdrop-blur-sm"
+                >
+                  {qualities.map((q) => (
+                    <button
+                      key={q.height}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={q.height === quality}
+                      onClick={() => {
+                        changeQuality(q.height);
+                        setQualityOpen(false);
+                        showControls();
+                      }}
+                      className={`px-3 py-2 text-left text-sm tabular-nums transition hover:bg-white/15 ${
+                        q.height === quality ? "font-semibold text-brand" : "text-white"
+                      }`}
+                    >
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {fullscreen ? (
             <button

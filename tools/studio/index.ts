@@ -9,6 +9,7 @@ import { formatBytes } from "./lib/chunks";
 import { buildConfig, isInsecureRemote, parseDotEnv, parseFlags, type StudioConfig } from "./lib/config";
 import { ToolMissingError, killCurrent, toolVersion } from "./lib/ffmpeg";
 import { fileExt, isVideoFile } from "./lib/media";
+import { backfill } from "./lib/backfill";
 import { dirsFor, processFile, type Ctx, type Dirs } from "./lib/pipeline";
 import { StateStore } from "./lib/state";
 import { ui } from "./lib/ui";
@@ -29,6 +30,8 @@ YoYo Studio - prepares your videos on this PC and uploads them to the site as dr
 Usage:  npm run studio            process everything in the incoming folder, then keep watching
         npm run studio -- --once     process what is there now, then exit
         npm run studio -- --dry-run  process but do not upload (outputs stay in studio/work)
+        npm run studio -- --backfill add lower qualities to videos already on the site (uses studio/done)
+        npm run studio -- --backfill --dry-run   show what backfill would do, without converting or uploading
         npm run studio -- --help     show this help
 
 Setup:  1. On the site open Admin -> Ingest tokens and create a token.
@@ -188,6 +191,29 @@ async function main() {
   for (const d of [dirs.root, dirs.incoming, dirs.work, dirs.done, dirs.failed]) await mkdir(d, { recursive: true });
 
   await checkTools(config);
+
+  if (flags.backfill) {
+    // Backfill always talks to the site (it has to look the videos up); --dry-run only skips the converting and uploading.
+    const { client, maxVideoBytes } = await connect(config);
+    const state = new StateStore(path.join(dirs.root, "state.json"));
+    const ctx: Ctx = { config, dirs, state, client, dryRun: flags.dryRun, maxVideoBytes };
+    let result;
+    try {
+      result = await backfill(ctx, { planOnly: flags.dryRun });
+    } catch (e) {
+      if (e instanceof AuthError) {
+        ui.error("The site stopped accepting the token (it was probably revoked).");
+        tokenHelp();
+      } else if (e instanceof ToolMissingError) ui.error(`${e.tool} could not be started. Reinstall ffmpeg (winget install Gyan.FFmpeg) and try again.`);
+      else ui.error(`Backfill stopped: ${(e as Error)?.message ?? e}`);
+      await settle();
+      process.exit(1);
+    }
+    ui.info("");
+    ui.info(`Backfill finished: ${result.added} updated, ${result.skipped} skipped, ${result.failed} failed.`);
+    await settle();
+    process.exit(result.failed ? 1 : 0);
+  }
 
   let client: StudioClient | null = null;
   let maxVideoBytes = DEFAULT_MAX_VIDEO_BYTES;

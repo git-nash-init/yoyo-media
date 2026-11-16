@@ -15,6 +15,8 @@ import {
   ORPHAN_UPLOAD_MS,
   STALE_UPLOAD_MS,
   checkChunk,
+  attachRenditionsSchema,
+  checkRenditionUploads,
   checkUploadRequest,
   checkVideoUploads,
   createUploadSchema,
@@ -263,7 +265,12 @@ export async function createVideoFromUploads(auth: IngestAuth, body: unknown) {
   if (!parsed.success) invalid(parsed.error.issues);
   const input = parsed.data;
 
-  const ids = [input.videoUploadId, ...(input.previewUploadId ? [input.previewUploadId] : []), ...input.thumbUploadIds];
+  const ids = [
+    input.videoUploadId,
+    ...(input.previewUploadId ? [input.previewUploadId] : []),
+    ...input.thumbUploadIds,
+    ...input.renditions.map((r) => r.uploadId),
+  ];
   const uploads = await prisma.ingestUpload.findMany({
     where: { id: { in: ids }, tokenId: auth.tokenId },
     select: { id: true, tokenId: true, kind: true, status: true, finalPath: true, totalSize: true },
@@ -277,6 +284,10 @@ export async function createVideoFromUploads(auth: IngestAuth, body: unknown) {
     throw new IngestError(409, "UPLOAD_INCOMPLETE", "The uploaded video file is missing, upload it again");
   const thumbs = input.thumbUploadIds.map((id) => byId.get(id)!.finalPath!);
   const previewPath = input.previewUploadId ? byId.get(input.previewUploadId)!.finalPath! : null;
+  const renditions = input.renditions.map((r) => {
+    const up = byId.get(r.uploadId)!;
+    return { height: r.height, filePath: up.finalPath!, sizeBytes: up.totalSize };
+  });
 
   const base = slugify(input.title);
   for (let attempt = 0; ; attempt++) {
@@ -304,9 +315,11 @@ export async function createVideoFromUploads(auth: IngestAuth, body: unknown) {
             filePath: videoUp.finalPath!,
             sizeBytes: videoUp.totalSize,
             durationSec: input.durationSec,
+            heightPx: input.heightPx,
             previewPath,
             thumbCandidates: thumbs,
             thumbPath: thumbs[0] ?? null,
+            ...(renditions.length ? { renditions: { create: renditions } } : {}),
           },
           select: { id: true, slug: true },
         });
@@ -319,4 +332,74 @@ export async function createVideoFromUploads(auth: IngestAuth, body: unknown) {
       throw e;
     }
   }
+}
+
+/** Studio's backfill: find videos by title so lower qualities can be added to ones already on the site. */
+export async function findVideosByTitle(title: string) {
+  const t = title.trim().slice(0, 150);
+  if (!t) throw new IngestError(400, "INVALID_INPUT", "title is required");
+  const rows = await prisma.video.findMany({
+    // MySQL's default collation ignores case, which is what we want here.
+    where: { title: t },
+    select: { id: true, slug: true, title: true, type: true, durationSec: true, heightPx: true, _count: { select: { renditions: true } } },
+    take: 10,
+  });
+  return {
+    videos: rows.map((v) => ({
+      id: v.id,
+      slug: v.slug,
+      title: v.title,
+      type: v.type,
+      durationSec: v.durationSec,
+      heightPx: v.heightPx,
+      renditionCount: v._count.renditions,
+    })),
+  };
+}
+
+/** Attach lower-quality copies (already uploaded and completed) to an existing video. */
+export async function attachRenditions(auth: IngestAuth, videoId: string, body: unknown) {
+  const parsed = attachRenditionsSchema.safeParse(body);
+  if (!parsed.success) invalid(parsed.error.issues);
+  const input = parsed.data;
+  if (!isUploadId(videoId)) throw new IngestError(404, "VIDEO_NOT_FOUND", "Video not found");
+
+  const video = await prisma.video.findUnique({ where: { id: videoId }, select: { id: true, heightPx: true } });
+  if (!video) throw new IngestError(404, "VIDEO_NOT_FOUND", "Video not found");
+
+  const ids = input.renditions.map((r) => r.uploadId);
+  const uploads = await prisma.ingestUpload.findMany({
+    where: { id: { in: ids }, tokenId: auth.tokenId },
+    select: { id: true, tokenId: true, kind: true, status: true, finalPath: true, totalSize: true },
+  });
+  const check = checkRenditionUploads(input.renditions, uploads, auth.tokenId);
+  if (!check.ok) throw new IngestError(check.status, check.code, check.error);
+  const byId = new Map(uploads.map((u) => [u.id, u]));
+
+  const replaced: string[] = [];
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.ingestUpload.updateMany({
+      where: { id: { in: ids }, tokenId: auth.tokenId, status: "COMPLETE" },
+      data: { status: "CONSUMED" },
+    });
+    if (claimed.count !== ids.length) throw new IngestError(409, "UPLOAD_CONSUMED", "One of the uploads was already used");
+    for (const r of input.renditions) {
+      const up = byId.get(r.uploadId)!;
+      const existing = await tx.videoRendition.findUnique({
+        where: { videoId_height: { videoId, height: r.height } },
+        select: { filePath: true },
+      });
+      if (existing) replaced.push(existing.filePath);
+      await tx.videoRendition.upsert({
+        where: { videoId_height: { videoId, height: r.height } },
+        create: { videoId, height: r.height, filePath: up.finalPath!, sizeBytes: up.totalSize },
+        update: { filePath: up.finalPath!, sizeBytes: up.totalSize },
+      });
+    }
+    // Only fill in the main file's height when it was never recorded.
+    if (video.heightPx === 0 && input.heightPx > 0) await tx.video.update({ where: { id: videoId }, data: { heightPx: input.heightPx } });
+  });
+  for (const rel of replaced) await storage.remove(rel).catch(() => {});
+  await audit(null, "ingest.video.renditions", videoId, { tokenName: auth.tokenName, tokenId: auth.tokenId, count: input.renditions.length });
+  return { videoId, added: input.renditions.map((r) => r.height) };
 }

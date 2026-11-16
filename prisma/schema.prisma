@@ -159,6 +159,8 @@ model Video {
   status          VideoStatus @default(DRAFT)
   filePath        String
   sizeBytes       BigInt      @default(0)
+  /// Height in pixels of the main file (short side), 0 when unknown. Lower qualities live in VideoRendition.
+  heightPx        Int         @default(0)
   durationSec     Int         @default(0)
   thumbPath       String?
   /// JSON array of relative storage paths for candidate thumbnails
@@ -173,17 +175,33 @@ model Video {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
-  channel  Channel?        @relation(fields: [channelId], references: [id], onDelete: SetNull)
-  series   Series?         @relation(fields: [seriesId], references: [id], onDelete: SetNull)
-  models   VideoModel[]
-  progress WatchProgress[]
-  likes    VideoLike[]
-  comments Comment[]
+  channel    Channel?         @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  series     Series?          @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  models     VideoModel[]
+  progress   WatchProgress[]
+  likes      VideoLike[]
+  comments   Comment[]
+  renditions VideoRendition[]
 
   @@index([status, type, publishedAt])
   @@index([channelId])
   @@index([seriesId, episodeNo])
   @@index([isFeatured])
+}
+
+/// A lower-quality copy of a video (for example 480p or 360p). The main file stays in Video.filePath.
+model VideoRendition {
+  id        String   @id @default(cuid())
+  videoId   String
+  /// Short side in pixels: 360, 480 ...
+  height    Int
+  filePath  String
+  sizeBytes BigInt   @default(0)
+  createdAt DateTime @default(now())
+
+  video Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([videoId, height])
 }
 
 model VideoModel {

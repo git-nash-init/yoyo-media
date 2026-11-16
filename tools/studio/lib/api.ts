@@ -26,7 +26,8 @@ export class RestartUploadError extends Error {}
 
 export type Ping = { ok: boolean; tokenName: string; maxVideoBytes: number; maxImageBytes?: number; chunkSize: number };
 export type UploadStatus = { received: number; totalSize: number; status: string };
-export type UploadKind = "video" | "preview" | "thumb";
+export type UploadKind = "video" | "rendition" | "preview" | "thumb";
+export type SiteVideo = { id: string; slug: string; title: string; type: "LONG" | "SHORT"; durationSec: number; heightPx: number; renditionCount: number };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -114,8 +115,19 @@ export class StudioClient {
     videoUploadId: string;
     previewUploadId?: string;
     thumbUploadIds: string[];
+    heightPx?: number;
+    renditions?: { height: number; uploadId: string }[];
   }) {
     return (await this.request("POST", "/videos", { json: p })) as unknown as { videoId: string; slug: string; adminUrl: string };
+  }
+  /** Videos on the site with exactly this title. */
+  async findVideos(title: string): Promise<SiteVideo[]> {
+    const r = (await this.request("GET", `/videos?title=${encodeURIComponent(title)}`)) as unknown as { videos?: SiteVideo[] };
+    return Array.isArray(r.videos) ? r.videos : [];
+  }
+  /** Add lower qualities (already uploaded) to a video that exists. */
+  async attachRenditions(videoId: string, p: { heightPx: number; renditions: { height: number; uploadId: string }[] }) {
+    return (await this.request("POST", `/videos/${encodeURIComponent(videoId)}/renditions`, { json: p })) as unknown as { videoId: string; added: number[] };
   }
 }
 

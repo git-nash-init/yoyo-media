@@ -3,7 +3,7 @@
 A subscription video-streaming site with a full admin panel and a desktop tool for preparing videos.
 This repository contains the **player**, the **backend** and the **upload pipeline**.
 
-- **Player:** a watch page (resume, speed, fullscreen, watermark) and a vertical **Shorts** feed with a
+- **Player:** a watch page (resume, speed, quality menu, 10-second skip, fullscreen, watermark) and a vertical **Shorts** feed with a
   swipe/scroll feed, double-tap like and a draggable seek slider.
 - **Backend:** accounts, sessions, two-step sign-in for admins, subscriptions, test-mode payments,
   likes, comments, follows, search, and a media API that streams files with HTTP Range support and only
@@ -128,8 +128,10 @@ Pick one way:
 5. Open the draft link it prints, fill in the details, pick a thumbnail and press **Publish**.
 
 Studio options: `npm run studio -- --once` (process what is there, then exit),
-`--dry-run` (convert but do not upload), `--help`. Optional settings in `tools/studio/.env`:
-`STUDIO_MAX_HEIGHT` (default 720), `STUDIO_CRF` (quality 18-28, default 23),
+`--dry-run` (convert but do not upload), `--backfill` (add lower qualities to videos already on the site,
+from the originals in `studio/done`), `--help`. Every long video also gets 480p and 360p copies (only
+sizes below its own) for the player's quality menu. Optional settings in `tools/studio/.env`:
+`STUDIO_MAX_HEIGHT` (default 720), `STUDIO_QUALITIES` (default `480,360`, or `none`), `STUDIO_CRF` (quality 18-28, default 23),
 `STUDIO_KEEP_ORIGINALS`, `FFMPEG_PATH`, `FFPROBE_PATH`.
 
 ### Step 9. Try it with the sample videos

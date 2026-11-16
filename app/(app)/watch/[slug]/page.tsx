@@ -92,6 +92,7 @@ export default async function WatchPage({ params, searchParams }: Props) {
               src={videoUrl(video.id)}
               poster={video.thumb}
               previewSrc={video.preview}
+              qualities={video.qualities}
               durationSec={video.durationSec}
               initialPosition={startAt}
               watermark={watermarkFromSettings(settings)}

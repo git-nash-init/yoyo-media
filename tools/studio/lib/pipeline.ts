@@ -8,7 +8,7 @@ import { SpeedMeter, formatBytes, formatDuration, uploadLine } from "./chunks";
 import type { StudioConfig } from "./config";
 import { percent, previewArgs, remuxArgs, thumbArgs, transcodeArgs } from "./ffargs";
 import { FfmpegError, FileError, ToolMissingError, explainFfmpegFailure, probe, run, runWithProgress } from "./ffmpeg";
-import { baseName, canRemux, cleanTitle, computeScale, decideType, parseSidecar, previewWindow, thumbTimes, type Sidecar } from "./media";
+import { baseName, canRemux, cleanTitle, computeScale, decideType, parseSidecar, planRenditions, previewWindow, shortSide, thumbTimes, type Sidecar, type VideoType } from "./media";
 import { StateStore, fileKey, workDirName, type Entry, type OutputFile } from "./state";
 import { ui } from "./ui";
 
@@ -92,8 +92,28 @@ async function entryIsUsable(ctx: Ctx, entry: Entry | undefined): Promise<boolea
   return true;
 }
 
-/** Steps 1-6: produce the web-ready video, thumbnails and preview in work/<id>/. */
-async function encode(ctx: Ctx, sourcePath: string, key: string): Promise<Entry> {
+/**
+ * Make one lower-quality copy (`target` = short side in pixels) of `input`, which is `width`x`height` on screen.
+ * Used for new uploads (cut from the finished main video) and for backfill (cut from the original).
+ */
+export async function makeRendition(
+  config: StudioConfig,
+  p: { input: string; output: string; width: number; height: number; target: number; durationSec: number },
+): Promise<{ size: number }> {
+  const sc = computeScale(p.width, p.height, p.target);
+  const label = `Making the ${p.target}p copy (${sc.width}x${sc.height})`;
+  await runWithProgress(
+    config.ffmpegPath,
+    transcodeArgs({ input: p.input, output: p.output, width: sc.width, height: sc.height, crf: Math.min(51, config.crf + 1) }),
+    (sec) => ui.progress(label, percent(sec, p.durationSec)),
+  );
+  ui.progress(label, 100);
+  ui.progressDone();
+  return { size: (await stat(p.output)).size };
+}
+
+/** Steps 1-6: produce the web-ready video, extra qualities, thumbnails and preview in work/<id>/. */
+async function encode(ctx: Ctx, sourcePath: string, key: string, forcedType?: VideoType): Promise<Entry> {
   const { config } = ctx;
   const name = path.basename(sourcePath);
   const info = await probe(config.ffprobePath, sourcePath);
@@ -145,6 +165,23 @@ async function encode(ctx: Ctx, sourcePath: string, key: string): Promise<Entry>
   const portrait = out.height > out.width;
   const outputs: OutputFile[] = [{ kind: "video", file: "video.mp4", size: videoSize, sha256: "" }];
 
+  // Lower qualities for the viewer's quality menu. Shorts have no menu, so they get none.
+  if ((forcedType ?? autoType) === "LONG") {
+    for (const target of planRenditions(out.width, out.height, config.qualities)) {
+      const file = `video-${target}p.mp4`;
+      try {
+        const r = await makeRendition(config, { input: videoOut, output: path.join(dir, file), width: out.width, height: out.height, target, durationSec: out.durationSec });
+        if (r.size > 0 && r.size <= ctx.maxVideoBytes) outputs.push({ kind: "rendition", file, size: r.size, sha256: "", height: target });
+      } catch (e) {
+        ui.progressDone();
+        if (!(e instanceof FfmpegError)) throw e; // a missing lower quality is not fatal: the video still plays
+        ui.warn(`Could not make the ${target}p copy; the video will be uploaded without it.`);
+      }
+    }
+    const made = outputs.filter((o) => o.kind === "rendition").map((o) => `${o.height}p`);
+    if (made.length) ui.step(`Made lower qualities for the quality menu: ${made.join(", ")}`);
+  }
+
   let n = 0;
   for (const at of thumbTimes(out.durationSec)) {
     const file = `thumb-${++n}.jpg`;
@@ -156,7 +193,7 @@ async function encode(ctx: Ctx, sourcePath: string, key: string): Promise<Entry>
       if (!(e instanceof FfmpegError)) throw e; // a missing thumbnail is not fatal; the admin can upload one
     }
   }
-  const thumbCount = outputs.length - 1;
+  const thumbCount = outputs.filter((o) => o.kind === "thumb").length;
   ui.step(thumbCount ? `Made ${thumbCount} thumbnail${thumbCount === 1 ? "" : "s"} to choose from` : "Could not make thumbnails (you can upload one on the site)");
 
   const win = previewWindow(out.durationSec);
@@ -179,6 +216,7 @@ async function encode(ctx: Ctx, sourcePath: string, key: string): Promise<Entry>
     width: out.width,
     height: out.height,
     autoType,
+    mainHeight: shortSide(out.width, out.height),
     mode,
     outputs,
     processedAt: new Date().toISOString(),
@@ -248,6 +286,10 @@ async function upload(ctx: Ctx, key: string, entry: Entry, meta: { title: string
           videoUploadId: videoId,
           previewUploadId: entry.outputs.find((o) => o.kind === "preview")?.uploadId,
           thumbUploadIds: entry.outputs.filter((o) => o.kind === "thumb").map((o) => o.uploadId!),
+          heightPx: entry.mainHeight ?? 0,
+          renditions: entry.outputs
+            .filter((o) => o.kind === "rendition" && o.height && o.uploadId)
+            .map((o) => ({ height: o.height!, uploadId: o.uploadId! })),
         }),
       onRetry,
     );
@@ -320,7 +362,7 @@ export async function processFile(ctx: Ctx, sourcePath: string): Promise<Outcome
     if (await entryIsUsable(ctx, entry)) {
       ui.step("Already processed earlier, picking up where it stopped");
     } else {
-      entry = await encode(ctx, sourcePath, key);
+      entry = await encode(ctx, sourcePath, key, sidecar.type);
     }
     const e = entry!;
     const meta = {

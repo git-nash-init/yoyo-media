@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/session";
 import { storage, MIME_BY_EXT } from "@/lib/storage";
+import { parseQualityParam } from "@/lib/media/quality";
 import { rateLimit } from "@/lib/security/ratelimit";
 import { ipFromRequest } from "@/lib/security/ip";
 
@@ -116,8 +117,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ kind: string; i
       });
       if (!v || (v.status !== "PUBLISHED" && user.role !== "ADMIN")) return json("Not found", "NOT_FOUND", 404);
 
-      const download = new URL(req.url).searchParams.get("download") === "1";
+      const params = new URL(req.url).searchParams;
+      const download = params.get("download") === "1";
       const ext = v.filePath.split(".").pop() ?? "mp4";
+
+      // ?q=480 plays the 480p copy when the video has one; anything else (and every download) is the main file.
+      const q = parseQualityParam(params.get("q"));
+      if (!download && q) {
+        const r = await prisma.videoRendition.findUnique({
+          where: { videoId_height: { videoId: id, height: q } },
+          select: { filePath: true },
+        });
+        if (r) return serveFile(req, r.filePath, { cache: PRIVATE_CACHE });
+      }
       return serveFile(req, v.filePath, {
         cache: PRIVATE_CACHE,
         downloadName: download ? `yoyo-${v.slug}.${ext}` : undefined,

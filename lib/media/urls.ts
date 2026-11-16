@@ -12,8 +12,9 @@ export const thumbUrl = (video: WithVersion & { thumbPath?: string | null }) =>
 export const previewUrl = (video: { id: string; previewPath?: string | null }) =>
   video.previewPath ? `/api/media/preview/${video.id}` : null;
 
-/** Subscriber-only full video stream (supports Range). */
-export const videoUrl = (videoId: string) => `/api/media/video/${videoId}`;
+/** Subscriber-only full video stream (supports Range). `height` picks a lower quality when the video has one. */
+export const videoUrl = (videoId: string, height?: number) =>
+  height ? `/api/media/video/${videoId}?q=${height}` : `/api/media/video/${videoId}`;
 
 /** Subscriber-only download (same file, sent as an attachment). */
 export const downloadUrl = (videoId: string) => `/api/media/video/${videoId}?download=1`;

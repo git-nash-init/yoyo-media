@@ -13,6 +13,8 @@ export type OutputFile = {
   size: number;
   sha256: string;
   uploadId?: string;
+  /** For kind "rendition": the short side in pixels (480, 360 ...). */
+  height?: number;
 };
 
 export type Entry = {
@@ -22,6 +24,8 @@ export type Entry = {
   width: number;
   height: number;
   autoType: VideoType;
+  /** Short side of the main video in pixels. */
+  mainHeight?: number;
   mode: "remux" | "transcode";
   outputs: OutputFile[];
   processedAt: string;

@@ -138,6 +138,18 @@ export function computeScale(
   return { width: even((width * cap) / height), height: cap, scaled: true };
 }
 
+/** "720p" means the short side: 1280x720 and 720x1280 are both 720. */
+export const shortSide = (width: number, height: number) => Math.min(width, height);
+
+/**
+ * Which extra qualities to make for a video of this (output) size: every wanted height strictly below
+ * the video's own short side, best first. A 360p video gets none; a 720p one gets 480 and 360.
+ */
+export function planRenditions(width: number, height: number, wanted: number[]): number[] {
+  const own = shortSide(width, height);
+  return [...new Set(wanted)].filter((h) => h >= 144 && h < own).sort((a, b) => b - a);
+}
+
 /** Is the display size already within the limits computeScale would enforce? */
 export function withinSizeLimit(width: number, height: number, maxHeight: number): boolean {
   const s = computeScale(width, height, maxHeight);

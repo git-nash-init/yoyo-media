@@ -12,7 +12,7 @@ export const ORPHAN_UPLOAD_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const TOKEN_PREFIX = "yoyo_ing_";
 
-export const INGEST_KINDS = ["video", "preview", "thumb"] as const;
+export const INGEST_KINDS = ["video", "rendition", "preview", "thumb"] as const;
 export type IngestKind = (typeof INGEST_KINDS)[number];
 
 export type KindRule = {
@@ -23,6 +23,8 @@ export type KindRule = {
 
 export const KIND_RULES: Record<IngestKind, KindRule> = {
   video: { exts: ["mp4", "webm"], group: "video", folder: "videos" },
+  // A lower-quality copy of the main video (480p, 360p ...).
+  rendition: { exts: ["mp4", "webm"], group: "video", folder: "videos" },
   preview: { exts: ["mp4", "webm"], group: "video", folder: "previews" },
   thumb: { exts: ["jpg", "jpeg", "png", "webp"], group: "image", folder: "thumbs" },
 };
@@ -111,6 +113,13 @@ export const isUploadId = (v: unknown): v is string => typeof v === "string" && 
 
 const uploadId = z.string().regex(/^[a-z0-9]{8,40}$/, "Invalid upload id");
 
+/** One lower-quality copy: its short side in pixels and the upload that carries it. */
+export const renditionRefSchema = z.object({
+  height: z.number().int().min(144).max(2160),
+  uploadId,
+});
+export type RenditionRef = z.infer<typeof renditionRefSchema>;
+
 export const createVideoSchema = z
   .object({
     title: z.string().trim().min(1).max(150),
@@ -124,15 +133,43 @@ export const createVideoSchema = z
     videoUploadId: uploadId,
     previewUploadId: uploadId.optional(),
     thumbUploadIds: z.array(uploadId).max(5).default([]),
+    /** Short side of the main video in pixels (720 for a 720p file). */
+    heightPx: z.number().int().min(0).max(4320).default(0),
+    renditions: z.array(renditionRefSchema).max(6).default([]),
   })
   .refine(
     (v) => {
-      const ids = [v.videoUploadId, ...(v.previewUploadId ? [v.previewUploadId] : []), ...v.thumbUploadIds];
+      const ids = [
+        v.videoUploadId,
+        ...(v.previewUploadId ? [v.previewUploadId] : []),
+        ...v.thumbUploadIds,
+        ...v.renditions.map((r) => r.uploadId),
+      ];
       return new Set(ids).size === ids.length;
     },
     { message: "Each upload may be referenced only once", path: ["thumbUploadIds"] },
-  );
+  )
+  .refine((v) => new Set(v.renditions.map((r) => r.height)).size === v.renditions.length, {
+    message: "Each quality may be given only once",
+    path: ["renditions"],
+  });
 export type CreateVideoInput = z.infer<typeof createVideoSchema>;
+
+/** Add lower qualities to a video that already exists (Studio's backfill). */
+export const attachRenditionsSchema = z
+  .object({
+    heightPx: z.number().int().min(0).max(4320).default(0),
+    renditions: z.array(renditionRefSchema).min(1).max(6),
+  })
+  .refine((v) => new Set(v.renditions.map((r) => r.height)).size === v.renditions.length, {
+    message: "Each quality may be given only once",
+    path: ["renditions"],
+  })
+  .refine((v) => new Set(v.renditions.map((r) => r.uploadId)).size === v.renditions.length, {
+    message: "Each upload may be referenced only once",
+    path: ["renditions"],
+  });
+export type AttachRenditionsInput = z.infer<typeof attachRenditionsSchema>;
 
 export type UploadRef = { id: string; tokenId: string; kind: string; status: string; finalPath: string | null };
 
@@ -141,7 +178,7 @@ export type UploadRef = { id: string; tokenId: string; kind: string; status: str
  * CONSUMED) and be of the kind its slot expects.
  */
 export function checkVideoUploads(
-  input: Pick<CreateVideoInput, "videoUploadId" | "previewUploadId" | "thumbUploadIds">,
+  input: Pick<CreateVideoInput, "videoUploadId" | "previewUploadId" | "thumbUploadIds"> & { renditions?: RenditionRef[] },
   uploads: UploadRef[],
   tokenId: string,
 ): RuleOk | RuleError {
@@ -150,6 +187,7 @@ export function checkVideoUploads(
     [input.videoUploadId, "video"],
     ...(input.previewUploadId ? ([[input.previewUploadId, "preview"]] as [string, IngestKind][]) : []),
     ...input.thumbUploadIds.map((id) => [id, "thumb"] as [string, IngestKind]),
+    ...(input.renditions ?? []).map((r) => [r.uploadId, "rendition"] as [string, IngestKind]),
   ];
   for (const [id, kind] of wanted) {
     const u = byId.get(id);
@@ -159,6 +197,20 @@ export function checkVideoUploads(
     if (u.status === "CONSUMED") return fail(409, "UPLOAD_CONSUMED", `Upload ${id} was already used for a video`);
     if (u.status !== "COMPLETE" || !u.finalPath)
       return fail(409, "UPLOAD_INCOMPLETE", `Upload ${id} is not complete yet`);
+  }
+  return { ok: true };
+}
+
+/** Same ownership and state checks for the uploads that carry extra qualities. */
+export function checkRenditionUploads(renditions: RenditionRef[], uploads: UploadRef[], tokenId: string): RuleOk | RuleError {
+  const byId = new Map(uploads.map((u) => [u.id, u]));
+  for (const r of renditions) {
+    const u = byId.get(r.uploadId);
+    if (!u || u.tokenId !== tokenId) return fail(404, "UPLOAD_NOT_FOUND", `Upload ${r.uploadId} was not found`);
+    if (u.kind !== "rendition") return fail(422, "WRONG_KIND", `Upload ${r.uploadId} is a ${u.kind}, expected a rendition`);
+    if (u.status === "CONSUMED") return fail(409, "UPLOAD_CONSUMED", `Upload ${r.uploadId} was already used`);
+    if (u.status !== "COMPLETE" || !u.finalPath)
+      return fail(409, "UPLOAD_INCOMPLETE", `Upload ${r.uploadId} is not complete yet`);
   }
   return { ok: true };
 }

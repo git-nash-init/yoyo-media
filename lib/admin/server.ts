@@ -51,8 +51,10 @@ export async function removeVideoFiles(v: {
   previewPath: string | null;
   thumbPath: string | null;
   thumbCandidates: unknown;
+  /** Lower-quality copies (their rows are removed with the video; the files are removed here). */
+  renditions?: { filePath: string }[];
 }) {
-  const paths = new Set<string>([v.filePath, ...candidateList(v.thumbCandidates)]);
+  const paths = new Set<string>([v.filePath, ...candidateList(v.thumbCandidates), ...(v.renditions ?? []).map((r) => r.filePath)]);
   if (v.previewPath) paths.add(v.previewPath);
   if (v.thumbPath) paths.add(v.thumbPath);
   for (const p of paths) await removeFileQuietly(p);

@@ -69,7 +69,16 @@ export async function deleteVideoAction(id: string, thenRedirect = false): Promi
 
   const video = await prisma.video.findUnique({
     where: { id: parsed.data.id },
-    select: { id: true, title: true, type: true, filePath: true, previewPath: true, thumbPath: true, thumbCandidates: true },
+    select: {
+      id: true,
+      title: true,
+      type: true,
+      filePath: true,
+      previewPath: true,
+      thumbPath: true,
+      thumbCandidates: true,
+      renditions: { select: { filePath: true } },
+    },
   });
   if (!video) return NOT_FOUND;
 

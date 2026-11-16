@@ -6,6 +6,8 @@ export type StudioConfig = {
   token: string;
   dir: string;
   maxHeight: number;
+  /** Extra lower qualities to make for long videos (short side in pixels), best first. */
+  qualities: number[];
   crf: number;
   keepOriginals: boolean;
   ffmpegPath: string;
@@ -33,6 +35,18 @@ export function parseDotEnv(text: string): Record<string, string> {
     out[m[1]] = value;
   }
   return out;
+}
+
+/** "480, 360" -> [480, 360]. Bad entries are dropped; "none" or "off" means no extra qualities. */
+export function parseQualityList(value: string | undefined, fallback: number[]): number[] {
+  if (value == null || value.trim() === "") return fallback;
+  if (["none", "off", "no", "0"].includes(value.trim().toLowerCase())) return [];
+  const out = new Set<number>();
+  for (const part of value.split(/[\s,;]+/)) {
+    const m = /^(\d{3,4})p?$/i.exec(part.trim());
+    if (m && Number(m[1]) >= 144 && Number(m[1]) <= 2160) out.add(Number(m[1]));
+  }
+  return out.size ? [...out].sort((a, b) => b - a).slice(0, 4) : fallback;
 }
 
 export function parseBool(value: string | undefined, fallback: boolean): boolean {
@@ -91,6 +105,7 @@ export function buildConfig(
       token: (get("STUDIO_TOKEN") ?? "").trim(),
       dir: dirRaw ? path.resolve(repoRoot, dirRaw) : path.join(repoRoot, "studio"),
       maxHeight: parseIntInRange(get("STUDIO_MAX_HEIGHT"), 720, 144, 2160),
+      qualities: parseQualityList(get("STUDIO_QUALITIES"), [480, 360]),
       crf: parseIntInRange(get("STUDIO_CRF"), 23, 0, 51),
       keepOriginals: parseBool(get("STUDIO_KEEP_ORIGINALS"), true),
       ffmpegPath: (get("FFMPEG_PATH") ?? "").trim() || "ffmpeg",
@@ -99,13 +114,14 @@ export function buildConfig(
   };
 }
 
-export type CliFlags = { once: boolean; dryRun: boolean; help: boolean; unknown: string[] };
+export type CliFlags = { once: boolean; dryRun: boolean; backfill: boolean; help: boolean; unknown: string[] };
 
 export function parseFlags(argv: string[]): CliFlags {
-  const flags: CliFlags = { once: false, dryRun: false, help: false, unknown: [] };
+  const flags: CliFlags = { once: false, dryRun: false, backfill: false, help: false, unknown: [] };
   for (const a of argv) {
     if (a === "--once") flags.once = true;
     else if (a === "--dry-run" || a === "--dryrun") flags.dryRun = true;
+    else if (a === "--backfill") flags.backfill = true;
     else if (a === "--help" || a === "-h") flags.help = true;
     else flags.unknown.push(a);
   }
