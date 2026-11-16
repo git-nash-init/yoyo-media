@@ -2,7 +2,7 @@
 
 import { renderIcon } from "@/components/ui/line-icon";
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import {
   ExitFullscreenIcon,
   FullscreenIcon,
@@ -24,7 +24,8 @@ const SAVE_EVERY_MS = 10_000;
 const SLOW_AFTER_MS = 4_000;
 const HIDE_CONTROLS_MS = 3_000;
 /** Below this picture width the control row switches to its compact form. */
-const COMPACT_BELOW_PX = 560;
+const COMPACT_BELOW_PX = 640;
+const SKIP_SECONDS = 10;
 
 type Props = {
   videoId: string;
@@ -82,6 +83,13 @@ export function Player({
   const [orientLocked, setOrientLocked] = useState(false); // true when the device itself turned to match
   const portraitViewport = usePortraitViewport();
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [flash, setFlash] = useState<{ side: "back" | "fwd"; secs: number; id: number } | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashAcc = useRef<{ side: "back" | "fwd"; secs: number }>({ side: "fwd", secs: 0 });
+  const lastSkipAt = useRef(0);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTap = useRef<{ t: number; zone: "back" | "fwd" | "mid" } | null>(null);
+  const lastPointer = useRef<string>("mouse");
   const [speedOpen, setSpeedOpen] = useState(false);
   const speedOpenRef = useRef(false);
   const speedRef2 = useRef<HTMLDivElement>(null);
@@ -397,6 +405,73 @@ export function Player({
     setCurrent(clamped);
   }, []);
 
+  // ---------- 10 second skip ----------
+  // Works from buttons, keys (arrows, J and L) and double-tapping the left or right side on a phone.
+  // Quick repeats add up ("+10s", "+20s", ...) just like the on-screen badge shows.
+  const skipBy = useCallback(
+    (delta: number) => {
+      const v = videoRef.current;
+      if (!v || problem || previewRef.current || !ready) return;
+      seekTo(v.currentTime + delta);
+      const side = delta < 0 ? "back" : "fwd";
+      const acc = flashAcc.current;
+      acc.secs = acc.side === side && flashTimer.current ? acc.secs + SKIP_SECONDS : SKIP_SECONDS;
+      acc.side = side;
+      lastSkipAt.current = Date.now();
+      setFlash({ side, secs: acc.secs, id: lastSkipAt.current });
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => {
+        flashTimer.current = null;
+        acc.secs = 0;
+        setFlash(null);
+      }, 800);
+    },
+    [problem, ready, seekTo],
+  );
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      if (tapTimer.current) clearTimeout(tapTimer.current);
+    },
+    [],
+  );
+
+  // Mouse: click plays or pauses, double-click is full screen. Touch: a single tap plays or pauses
+  // (after a short wait to see whether a second tap follows); a double tap on the left or right
+  // side skips back or forward 10 seconds and the middle goes full screen. Taps right after a skip keep skipping.
+  const onVideoClick = (e: MouseEvent<HTMLVideoElement>) => {
+    if (lastPointer.current !== "touch") {
+      togglePlay();
+      return;
+    }
+    const el = e.currentTarget;
+    const x = el.clientWidth > 0 ? e.nativeEvent.offsetX / el.clientWidth : 0.5;
+    const zone: "back" | "fwd" | "mid" = x < 0.35 ? "back" : x > 0.65 ? "fwd" : "mid";
+    const now = Date.now();
+    const skipNow = (z: "back" | "fwd") => skipBy(z === "back" ? -SKIP_SECONDS : SKIP_SECONDS);
+    if (tapTimer.current) {
+      clearTimeout(tapTimer.current);
+      tapTimer.current = null;
+    }
+    if (zone !== "mid" && now - lastSkipAt.current < 700) {
+      skipNow(zone);
+      return;
+    }
+    const prev = lastTap.current;
+    if (prev && now - prev.t < 300 && prev.zone === zone) {
+      lastTap.current = null;
+      if (zone === "mid") toggleFullscreen();
+      else skipNow(zone);
+      return;
+    }
+    lastTap.current = { t: now, zone };
+    tapTimer.current = setTimeout(() => {
+      tapTimer.current = null;
+      lastTap.current = null;
+      togglePlay();
+    }, 300);
+  };
+
   const toggleMute = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -425,12 +500,14 @@ export function Player({
         togglePlay();
         break;
       case "ArrowLeft":
+      case "j":
         e.preventDefault();
-        seekTo(position.current - 5);
+        skipBy(-SKIP_SECONDS);
         break;
       case "ArrowRight":
+      case "l":
         e.preventDefault();
-        seekTo(position.current + 5);
+        skipBy(SKIP_SECONDS);
         break;
       case "f":
         e.preventDefault();
@@ -507,8 +584,13 @@ export function Player({
         controlsList="nodownload noremoteplayback"
         disablePictureInPicture
         onContextMenu={(e) => e.preventDefault()}
-        onClick={togglePlay}
-        onDoubleClick={toggleFullscreen}
+        onPointerDown={(e) => {
+          lastPointer.current = e.pointerType;
+        }}
+        onClick={onVideoClick}
+        onDoubleClick={() => {
+          if (lastPointer.current !== "touch") toggleFullscreen();
+        }}
         className="h-full w-full bg-black object-contain"
         onLoadStart={armSlowTimer}
         onLoadedMetadata={(e) => handleMetadata(e.currentTarget)}
@@ -609,6 +691,44 @@ export function Player({
         >
           <PlayIcon size={28} />
         </button>
+      ) : null}
+
+      {/* Phone / portrait: back and forward 10 seconds on either side of the centre */}
+      {compact && ready && !blocked && !usingPreview ? (
+        <div
+          className={`pointer-events-none absolute inset-x-0 top-1/2 z-20 flex -translate-y-1/2 items-center justify-center gap-24 transition-opacity duration-200 ${
+            controlsVisible || !playing ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {(["back", "fwd"] as const).map((dir) => (
+            <button
+              key={dir}
+              type="button"
+              onClick={() => skipBy(dir === "back" ? -SKIP_SECONDS : SKIP_SECONDS)}
+              aria-label={dir === "back" ? "Back 10 seconds" : "Forward 10 seconds"}
+              tabIndex={controlsVisible || !playing ? 0 : -1}
+              className={`grid h-12 w-12 place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm transition active:bg-black/70 ${
+                controlsVisible || !playing ? "pointer-events-auto" : ""
+              }`}
+            >
+              <SkipIcon dir={dir} size={26} />
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Skip badge: "+10s", "+20s" while skipping */}
+      {flash ? (
+        <div
+          key={flash.id}
+          aria-live="polite"
+          className={`pointer-events-none absolute top-1/2 z-20 -translate-y-1/2 rounded-full bg-black/65 px-4 py-2.5 text-sm font-semibold tabular-nums text-white backdrop-blur-sm ${
+            flash.side === "back" ? "left-4 sm:left-[12%]" : "right-4 sm:right-[12%]"
+          }`}
+        >
+          {flash.side === "back" ? "−" : "+"}
+          {flash.secs}s
+        </div>
       ) : null}
 
       {/* Slow connection hint: unobtrusive, keeps trying in the background */}
@@ -715,6 +835,18 @@ export function Player({
             {playing ? <PauseIcon size={20} /> : <PlayIcon size={20} />}
           </button>
 
+          {/* Wide player: skip buttons sit in the row. Narrow (phone) players show them beside the centre instead. */}
+          {compact ? null : (
+            <>
+              <button type="button" onClick={() => skipBy(-SKIP_SECONDS)} aria-label="Back 10 seconds" title="Back 10 seconds (J)" className={iconBtn}>
+                <SkipIcon dir="back" size={22} />
+              </button>
+              <button type="button" onClick={() => skipBy(SKIP_SECONDS)} aria-label="Forward 10 seconds" title="Forward 10 seconds (L)" className={iconBtn}>
+                <SkipIcon dir="fwd" size={22} />
+              </button>
+            </>
+          )}
+
           <VolumeControl
             variant="bar"
             volume={volume}
@@ -801,6 +933,27 @@ export function Player({
       </div>
       </div>
     </div>
+  );
+}
+
+/** Circular arrow with "10" inside; `back` turns anticlockwise, `fwd` clockwise. */
+function SkipIcon({ dir, size = 24 }: { dir: "back" | "fwd"; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <g
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        transform={dir === "fwd" ? "translate(24 0) scale(-1 1)" : undefined}
+      >
+        <path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5" />
+        <path d="M4.5 3.5v4h4" />
+      </g>
+      <text x="12" y="15.6" textAnchor="middle" fontSize="7.5" fontWeight="700" fill="currentColor" fontFamily="system-ui, sans-serif">
+        10
+      </text>
+    </svg>
   );
 }
 
